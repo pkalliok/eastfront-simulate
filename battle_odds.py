@@ -90,7 +90,10 @@ def extended_outcome_distribution(
     if is_defeated(init.attacker): return [(0.,1.)]
     if is_defeated(init.defender): return [(1.,0.)]
     one_round = battle_round_outcome_distribution(init, air_strike)
-    recurse_probability = one_round.pop(init)
+    try:
+        recurse_probability = one_round.pop(init)
+    except KeyError:
+        recurse_probability = 0.000000001
     regression_history, instant_win_prob, instant_defeat_prob = [], 0., 0.
     for next_standing, probability in one_round.items():
         if is_defeated(next_standing.defender):
