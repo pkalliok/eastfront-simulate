@@ -1,4 +1,5 @@
 
+import re
 from collections import defaultdict
 from dataclasses import dataclass
 from functools import cache
@@ -20,6 +21,22 @@ class BattleTroops:
 class BattleStanding:
     attacker: BattleTroops = BattleTroops()
     defender: BattleTroops = BattleTroops()
+
+troopspec_re = re.compile(r"(T[0-9]+)?(D[0-9]+)?(S[0-9]+)?")
+
+def units(unitspec):
+    if not unitspec: return ()
+    return tuple(int(cv) for cv in unitspec[1:])
+
+def troops(troopspec: str):
+    parsed = troopspec_re.match(troopspec)
+    if not parsed: raise Exception("bad troopspec: " + troopspec)
+    tf, df, sf = parsed.groups()
+    return BattleTroops(units(tf), units(df), units(sf))
+
+def standing(standspec: str):
+    attack, defend = standspec.split("/")
+    return BattleStanding(troops(attack), troops(defend))
 
 def apply_damage(victim: BattleTroops, aggressor: BattleTroops):
     damage = sum(1 for _ in range(sum(aggressor.triple_fire_cv)) if d6() >= 4) \
@@ -118,4 +135,8 @@ def interpret_extended_outcome(extended_outcome):
         "expected time to lose": 1 + sum((l / loss_prob) * turn
             for turn, (_, l) in enumerate(extended_outcome)),
     }
+
+def results(init: BattleStanding, air_strike: BattleTroops):
+    return interpret_extended_outcome(
+            extended_outcome_distribution(init, air_strike))
 
