@@ -16,13 +16,14 @@ class BattleTroops:
     triple_fire_cv: tuple[int] = ()
     double_fire_cv: tuple[int] = ()
     single_fire_cv: tuple[int] = ()
+    hits_to_damage: int = 1
 
 @dataclass(frozen=True)
 class BattleStanding:
     attacker: BattleTroops = BattleTroops()
     defender: BattleTroops = BattleTroops()
 
-troopspec_re = re.compile(r"(T[0-9]+)?(D[0-9]+)?(S[0-9]+)?")
+troopspec_re = re.compile(r"(T[0-9]+)?(D[0-9]+)?(S[0-9]+)?(:[1-3])?")
 
 def units(unitspec):
     if not unitspec: return ()
@@ -31,18 +32,22 @@ def units(unitspec):
 def troops(troopspec: str):
     parsed = troopspec_re.match(troopspec)
     if not parsed: raise Exception("bad troopspec: " + troopspec)
-    tf, df, sf = parsed.groups()
-    return BattleTroops(units(tf), units(df), units(sf))
+    tf, df, sf, defense = parsed.groups()
+    return BattleTroops(units(tf), units(df), units(sf), int((defense or ":1")[1:]))
 
 def standing(standspec: str):
     attack, defend = standspec.split("/")
     return BattleStanding(troops(attack), troops(defend))
 
-def apply_damage(victim: BattleTroops, aggressor: BattleTroops):
-    damage = sum(1 for _ in range(sum(aggressor.triple_fire_cv)) if d6() >= 4) \
-           + sum(1 for _ in range(sum(aggressor.double_fire_cv)) if d6() >= 5) \
-           + sum(1 for _ in range(sum(aggressor.single_fire_cv)) if d6() >= 6)
-    if damage == 0: return victim
+# game logic
+
+def apply_damage(victim: BattleTroops, aggressor: BattleTroops, carryover:int = 0):
+    hits = carryover \
+            + sum(1 for _ in range(sum(aggressor.triple_fire_cv)) if d6() >= 4) \
+            + sum(1 for _ in range(sum(aggressor.double_fire_cv)) if d6() >= 5) \
+            + sum(1 for _ in range(sum(aggressor.single_fire_cv)) if d6() >= 6)
+    if hits == 0: return (0, victim)
+    damage = hits // victim.hits_to_damage
     result_triple = list(victim.triple_fire_cv)
     result_double = list(victim.double_fire_cv)
     result_single = list(victim.single_fire_cv)
@@ -58,14 +63,16 @@ def apply_damage(victim: BattleTroops, aggressor: BattleTroops):
             result_single[result_single.index(max_single)] -= 1
         else: break
         damage -= 1
-    return BattleTroops(tuple(result_triple),
+    return (damage % victim.hits_to_damage, BattleTroops(
+            tuple(result_triple),
             tuple(result_double),
-            tuple(result_single))
+            tuple(result_single),
+            victim.hits_to_damage))
 
 def battle_round_outcome(init: BattleStanding, air_strike: BattleTroops):
-    firing_defenders = apply_damage(init.defender, air_strike)
-    remaining_attackers = apply_damage(init.attacker, firing_defenders)
-    remaining_defenders = apply_damage(firing_defenders, remaining_attackers)
+    carryover, firing_defenders = apply_damage(init.defender, air_strike)
+    _, remaining_attackers = apply_damage(init.attacker, firing_defenders)
+    _, remaining_defenders = apply_damage(firing_defenders, remaining_attackers, carryover)
     return BattleStanding(remaining_attackers, remaining_defenders)
 
 def battle_round_outcome_distribution(
@@ -80,6 +87,10 @@ def order_by_likelihood(outcome_distribution):
     return sorted(((prob, standing)
             for standing, prob in outcome_distribution.items()),
             key = lambda x: -x[0])
+
+def one_round_results(init: BattleStanding, air_strike: BattleTroops):
+    return order_by_likelihood(
+            battle_round_outcome_distribution(init, air_strike))
 
 def is_defeated(troops: BattleTroops):
     return sum(troops.triple_fire_cv \
