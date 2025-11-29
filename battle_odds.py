@@ -109,6 +109,21 @@ def battle_round_outcome_distribution(
         result[battle_round_outcome(init, air_strike)] += 1./trials
     return result
 
+def repeated_battle_distribution(
+        nrounds: int, init: BattleStanding, air_strike: BattleTroops
+):
+    """Return a dictionary of probabilities of different outcomes from
+    multiple consecutive rounds of battle (given by nrounds)."""
+    if nrounds <= 0: return {init: 1.}
+    result = defaultdict(int)
+    for standing, probability in battle_round_outcome_distribution(
+            init, air_strike).items():
+        result_from_standing = repeated_battle_distribution(
+                nrounds - 1, standing, air_strike)
+        for end_standing, end_probability in result_from_standing.items():
+            result[end_standing] += probability * end_probability
+    return result
+
 ## helpers for watching outcome distributions
 
 def order_by_likelihood(outcome_distribution):
@@ -116,9 +131,11 @@ def order_by_likelihood(outcome_distribution):
             for standing, prob in outcome_distribution.items()),
             key = lambda x: -x[0])
 
-def one_round_results(init: BattleStanding, air_strike: BattleTroops):
+def repeated_round_results(
+        nrounds: int, init: BattleStanding, air_strike: BattleTroops
+):
     return order_by_likelihood(
-            battle_round_outcome_distribution(init, air_strike))
+            repeated_battle_distribution(nrounds, init, air_strike))
 
 ## handlers for extended outcomes.
 
