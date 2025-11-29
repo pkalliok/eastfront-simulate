@@ -23,6 +23,8 @@ class BattleStanding:
     attacker: BattleTroops = BattleTroops()
     defender: BattleTroops = BattleTroops()
 
+## helpers for writing BattleTroops and BattleStandings
+
 troopspec_re = re.compile(r"(T[0-9]+)?(D[0-9]+)?(S[0-9]+)?(:[1-3])?")
 
 def units(unitspec):
@@ -30,22 +32,37 @@ def units(unitspec):
     return tuple(int(cv) for cv in unitspec[1:])
 
 def troops(troopspec: str):
+    """Make a BattleTroops out of string representation.
+    For example `T43D1S4:2` means Triple Fire units of 4 and 3 CV,
+    Double Fire of 1 CV, Single Fire of 2 CV, standing in a terrain that
+    gives double defense."""
     parsed = troopspec_re.match(troopspec)
     if not parsed: raise Exception("bad troopspec: " + troopspec)
     tf, df, sf, defense = parsed.groups()
-    return BattleTroops(units(tf), units(df), units(sf), int((defense or ":1")[1:]))
+    return BattleTroops(
+            units(tf), units(df), units(sf),
+            int((defense or ":1")[1:]))
 
 def standing(standspec: str):
+    """Make a BattleStanding out of string representation.
+    For example `D4/S3:1` means Double Fire unit of 4CV against Single
+    Fire unit of 3CV in a field (no double defense)."""
     attack, defend = standspec.split("/")
     return BattleStanding(troops(attack), troops(defend))
 
 # game logic
 
-def apply_damage(victim: BattleTroops, aggressor: BattleTroops, carryover:int = 0):
+def apply_damage(
+        victim: BattleTroops,
+        aggressor: BattleTroops,
+        carryover: int = 0
+):
+    """calculate the new situation of victim after damage is done by aggressor.
+    Returns number of partial hits (carryover) and victim as new BattleTroops."""
     hits = carryover \
-            + sum(1 for _ in range(sum(aggressor.triple_fire_cv)) if d6() >= 4) \
-            + sum(1 for _ in range(sum(aggressor.double_fire_cv)) if d6() >= 5) \
-            + sum(1 for _ in range(sum(aggressor.single_fire_cv)) if d6() >= 6)
+         + sum(1 for _ in range(sum(aggressor.triple_fire_cv)) if d6() >= 4) \
+         + sum(1 for _ in range(sum(aggressor.double_fire_cv)) if d6() >= 5) \
+         + sum(1 for _ in range(sum(aggressor.single_fire_cv)) if d6() >= 6)
     if hits == 0: return (0, victim)
     damage = hits // victim.hits_to_damage
     result_triple = list(victim.triple_fire_cv)
@@ -70,18 +87,29 @@ def apply_damage(victim: BattleTroops, aggressor: BattleTroops, carryover:int = 
             victim.hits_to_damage))
 
 def battle_round_outcome(init: BattleStanding, air_strike: BattleTroops):
+    """return new battle standing after one round of battle"""
     carryover, firing_defenders = apply_damage(init.defender, air_strike)
     _, remaining_attackers = apply_damage(init.attacker, firing_defenders)
-    _, remaining_defenders = apply_damage(firing_defenders, remaining_attackers, carryover)
+    _, remaining_defenders = apply_damage(
+            firing_defenders,
+            remaining_attackers,
+            carryover
+    )
     return BattleStanding(remaining_attackers, remaining_defenders)
 
 def battle_round_outcome_distribution(
         init: BattleStanding, air_strike: BattleTroops
 ):
+    """Return a dictionary of probabilities of different outcomes from
+    one round of battle.  Keys of the dictionary are the different
+    outcomes (as BattleStanding objects), values are the probability of
+    that outcome."""
     result = defaultdict(int)
     for _ in range(trials):
         result[battle_round_outcome(init, air_strike)] += 1./trials
     return result
+
+## helpers for watching outcome distributions
 
 def order_by_likelihood(outcome_distribution):
     return sorted(((prob, standing)
@@ -92,17 +120,31 @@ def one_round_results(init: BattleStanding, air_strike: BattleTroops):
     return order_by_likelihood(
             battle_round_outcome_distribution(init, air_strike))
 
+## handlers for extended outcomes.
+
+# extended outcomes are lists of (win_probablitity, loss_probability)
+# pairs, where the place in list (0, 1, 2, ...) means how many rounds
+# the battle has taken.  For instance, if the value at index 2 is (.8,
+# .05), then the battle has 80% probability of ending in a win after two
+# battle rounds, and 5% probablitity of ending in a loss after two
+# rounds.  The probabilities of ending after other rounds are given at
+# other indices in the list.
+
 def is_defeated(troops: BattleTroops):
     return sum(troops.triple_fire_cv \
             + troops.double_fire_cv \
             + troops.single_fire_cv) == 0
 
 def outcome_sum(outcome1, outcome2, weight1, weight2):
+    """Takes two extended outcomes and returns their weigted sum."""
     return [(weight1*victory1+weight2*victory2, weight1*defeat1+weight2*defeat2)
             for (victory1, defeat1), (victory2, defeat2)
             in zip_longest(outcome1, outcome2, fillvalue=(0.,0.))]
 
 def recursive_regression(extended_outcome, recurse_probability):
+    """Returns an extended outcome based on its input and the fact that
+    there is recurse_probability possibility that nothing happens in the
+    battle on one round."""
     # approximate number of regressions to cover 99% of cases
     regression_length = round(-5. / log(recurse_probability))
     result = extended_outcome
@@ -115,6 +157,8 @@ def recursive_regression(extended_outcome, recurse_probability):
 def extended_outcome_distribution(
         init: BattleStanding, air_strike: BattleTroops
 ):
+    """Produces an extended outcome from when battle is started with
+    init and continued until either attacker or defender dies."""
     if is_defeated(init.attacker): return [(0.,1.)]
     if is_defeated(init.defender): return [(1.,0.)]
     one_round = battle_round_outcome_distribution(init, air_strike)
